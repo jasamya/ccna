@@ -1,784 +1,675 @@
-import React, { useState, useEffect, useMemo, useCallback } from 'react';
-import { initializeApp } from 'firebase/app';
-import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from 'firebase/auth';
-import { getFirestore, doc, setDoc, getDoc, collection, getDocs, writeBatch } from 'firebase/firestore';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { 
-  BookOpen, Target, Zap, Clock, BarChart3, Award, Flame, 
-  ChevronRight, ArrowLeft, Bookmark, CheckCircle2, XCircle, RotateCcw, 
-  RefreshCw, GraduationCap, LayoutGrid, Server
+  Play, Clock, Target, BarChart2, BookOpen, Settings, 
+  ChevronRight, ChevronLeft, CheckCircle, XCircle, AlertCircle,
+  Brain, FileText, Upload, Download, Activity, Server, Shield
 } from 'lucide-react';
 
-/* =========================================================================
-   FIREBASE INITIALIZATION (Rules 1, 2, 3 Compliant)
-   ========================================================================= */
-const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : {};
-const app = initializeApp(firebaseConfig);
-const auth = getAuth(app);
-const db = getFirestore(app);
-const appId = typeof __app_id !== 'undefined' ? __app_id : 'ccna-pro-app';
-
-/* =========================================================================
-   PREMIUM SEED DATA (CCNA 2026 Blueprint)
-   This is injected into Firestore to demonstrate the scalable engine.
-   ========================================================================= */
-const seedQuestions = [
+// ==========================================
+// DATA LAYER: Initial Seed Database
+// Represents the initial SQLite local sync
+// ==========================================
+const SEED_QUESTIONS = [
   {
-    id: "netfund-01",
-    domain: "Network Fundamentals",
-    subtopic: "Routing Tables",
-    difficulty: "Hard",
-    type: "mcq",
-    questionText: "Review the routing table snippet below:\n\nO 10.1.2.0/24 [110/65] via 192.168.1.2, 00:00:15, GigabitEthernet0/0\nD 10.1.0.0/16 [90/30720] via 192.168.2.2, 00:05:22, GigabitEthernet0/1\nS 10.0.0.0/8 [1/0] via 10.254.254.1\n\nA packet arrives destined for 10.1.2.50. Which interface will the router use to forward the packet?",
-    options: ["GigabitEthernet0/0", "GigabitEthernet0/1", "10.254.254.1", "It will drop the packet"],
-    correctAnswer: 0,
-    explanation: "The router uses the Longest Prefix Match (LPM) rule. The destination 10.1.2.50 falls into the /24, /16, and /8 networks. The /24 route (OSPF) is the most specific match, so it is chosen regardless of Administrative Distance.",
-    whyWrong: [
-      "Correct. /24 is the longest match.",
-      "Incorrect. EIGRP has a better AD (90 vs 110), but LPM is checked BEFORE Administrative Distance.",
-      "Incorrect. The static route has the best AD (1), but the shortest prefix (/8).",
-      "Incorrect. Multiple valid routes exist."
-    ],
-    reference: "CCNA 200-301 Official Cert Guide, Chapter 15: IPv4 Routing Concepts"
+    id: "q1001",
+    objective: "3.0 IP Connectivity",
+    topic: "OSPFv2",
+    difficulty: 7,
+    type: "single",
+    text: "Which OSPF network type is enabled by default on a serial interface with Point-to-Point encapsulation?",
+    options: ["Broadcast", "Non-Broadcast Multi-Access (NBMA)", "Point-to-Point", "Point-to-Multipoint"],
+    correctAnswers: [2],
+    explanation: {
+      beginner: "Serial links usually connect just two routers. OSPF recognizes this and defaults to 'Point-to-Point' mode, meaning it doesn't need to elect a designated router (DR).",
+      intermediate: "On HDLC and PPP encapsulated serial links, OSPF defaults to the Point-to-Point network type. Hello packets are sent to the multicast address 224.0.0.5. No DR/BDR election occurs, saving overhead.",
+      advanced: "Cisco IOS dynamically determines the default OSPF network type based on the interface hardware and encapsulation. An interface configured with `encapsulation ppp` or `hdlc` defaults to point-to-point. Timers are Hello 10s, Dead 40s. A /30 or /31 subnet is optimal here to conserve IP space.",
+      cisco_best_practice: "Always explicitly configure `ip ospf network point-to-point` on Ethernet links that only connect two routers to bypass the unnecessary DR/BDR election and speed up convergence."
+    }
   },
   {
-    id: "auto-01",
-    domain: "Automation & Programmability",
-    subtopic: "REST APIs & JSON",
-    difficulty: "Medium",
-    type: "mcq",
-    questionText: "In a RESTful API operation using NETCONF/RESTCONF, which HTTP method is strictly designed to entirely replace an existing resource?",
-    options: ["POST", "PATCH", "PUT", "UPDATE"],
-    correctAnswer: 2,
-    explanation: "In REST architecture, PUT is used to update an entire resource, replacing the existing data. PATCH is used for partial updates. POST creates a new resource.",
-    whyWrong: [
-      "Incorrect. POST is used to create new resources, not replace existing ones.",
-      "Incorrect. PATCH is used to partially modify an existing resource.",
-      "Correct. PUT completely replaces the target resource.",
-      "Incorrect. UPDATE is not a standard HTTP method."
-    ],
-    reference: "CCNA 200-301 v1.1 Blueprint 6.0: Automation and Programmability"
+    id: "q1002",
+    objective: "1.0 Network Fundamentals",
+    topic: "IPv4 Subnetting",
+    difficulty: 8,
+    type: "single",
+    text: "You need to allocate a subnet for a new branch office that requires 55 usable host addresses. Which subnet mask provides the necessary addresses while wasting the fewest IPs?",
+    options: ["255.255.255.192 (/26)", "255.255.255.224 (/27)", "255.255.255.128 (/25)", "255.255.255.240 (/28)"],
+    correctAnswers: [0],
+    explanation: {
+      beginner: "You need 55 addresses. A /26 gives you 64 total addresses, minus 2 (network and broadcast) leaves 62 usable. This fits 55 perfectly.",
+      intermediate: "The formula for usable hosts is 2^h - 2, where h is the number of host bits. A /26 mask has 6 host bits (32 - 26 = 6). 2^6 = 64. 64 - 2 = 62 usable hosts. A /27 only provides 30 usable hosts, which is insufficient.",
+      advanced: "Subnetting efficiency is critical. The requirement is >= 55 hosts. /25 (126 hosts) wastes 71 IPs. /26 (62 hosts) wastes 7 IPs. /27 (30 hosts) fails the requirement. Therefore, /26 is the mathematical optimum. In enterprise IPAM, you would assign a /26 from your site's larger aggregate block.",
+      cisco_best_practice: "When allocating IP space, factor in 20% future growth if possible, though strict exam questions require the exact mathematical fit. Document the assignment in an IPAM tool."
+    }
   },
   {
-    id: "lab-sub-01",
-    domain: "Network Fundamentals",
-    subtopic: "IPv4 Subnetting",
-    difficulty: "Expert",
-    type: "lab-subnetting",
-    questionText: "Interactive Challenge: Your company is assigned the prefix 172.16.0.0/21. You need to identify the parameters for the 3rd subnet (assuming subnet 0 is the first).",
-    labDetails: {
-      networkTarget: "172.16.16.0",
-      broadcastTarget: "172.16.23.255"
-    },
-    explanation: "A /21 mask (255.255.248.0) gives a block size of 8 in the 3rd octet. Subnets are: 1st (172.16.0.0), 2nd (172.16.8.0), 3rd (172.16.16.0). The broadcast for the 3rd is one less than the 4th (172.16.24.0), which is 172.16.23.255.",
-    reference: "Subnetting Deep Dive"
+    id: "q1003",
+    objective: "2.0 Network Access",
+    topic: "VLANs & Trunking",
+    difficulty: 6,
+    type: "multiple",
+    text: "Which two statements about IEEE 802.1Q are true? (Choose two)",
+    options: [
+      "It encapsulates the entire original Ethernet frame.",
+      "It inserts a 4-byte tag into the original Ethernet frame.",
+      "It requires a separate VLAN for native, untagged traffic.",
+      "It modifies the original Frame Check Sequence (FCS).",
+      "It is a Cisco proprietary protocol."
+    ],
+    correctAnswers: [1, 3],
+    explanation: {
+      beginner: "802.1Q sneaks a 4-byte label (tag) into the middle of the frame to identify the VLAN. Because the frame changed, the error-checking number at the end (FCS) has to be recalculated.",
+      intermediate: "802.1Q is an open standard (unlike ISL, which is Cisco proprietary and encapsulates the whole frame). 802.1Q inserts a 4-byte VLAN tag (containing the TPID and TCI) between the Source MAC and Length/Type fields. This modification necessitates a recalculation of the FCS trailer.",
+      advanced: "The 802.1Q tag consists of the TPID (0x8100) and the TCI (composed of PCP for QoS, DEI, and the 12-bit VID). Because it modifies the payload payload by inserting 4 bytes, the frame's overall length increases, and the trailing FCS must be recomputed by the egress switch port hardware.",
+      cisco_best_practice: "Ensure native VLANs match on both ends of an 802.1Q trunk to prevent VLAN leaking and spanning-tree issues. Cisco recommends changing the native VLAN from the default of 1."
+    }
   },
   {
-    id: "sec-01",
-    domain: "Security Fundamentals",
-    subtopic: "Dynamic ARP Inspection",
-    difficulty: "Medium",
-    type: "mcq",
-    questionText: "Dynamic ARP Inspection (DAI) evaluates incoming ARP packets on untrusted ports. To validate these packets, DAI relies fundamentally on which database?",
-    options: ["MAC Address Table", "DHCP Snooping Binding Database", "Active Directory", "802.1X Auth Table"],
-    correctAnswer: 1,
-    explanation: "DAI intercepts, logs, and discards ARP packets with invalid MAC-to-IP address bindings. It uses the DHCP Snooping Binding Database (which maps legitimate IPs to MACs and switch ports) to verify these bindings.",
-    whyWrong: [
-      "Incorrect. The MAC table only maps MACs to ports, not IP-to-MAC bindings for security.",
-      "Correct. DAI relies directly on DHCP Snooping.",
-      "Incorrect. AD is used for user authentication, not Layer 2 ARP inspection.",
-      "Incorrect. 802.1X secures port access but doesn't track IP-to-MAC bindings."
+    id: "q1004",
+    objective: "5.0 Security Fundamentals",
+    topic: "Access Control Lists",
+    difficulty: 9,
+    type: "single",
+    text: "An extended ACL is applied inbound on interface GigabitEthernet0/0. The final line of the ACL is 'deny ip any any'. If a packet arrives that does not match any explicitly configured permit or deny statement, what action does the router take?",
+    options: [
+      "The packet is forwarded to the default route.",
+      "The packet is punted to the CPU for inspection.",
+      "The packet is dropped.",
+      "The packet is permitted because it did not match a deny statement."
     ],
-    reference: "CCNA Security: Layer 2 Attack Mitigation"
+    correctAnswers: [2],
+    explanation: {
+      beginner: "Every access list has an invisible 'deny everything else' rule at the very bottom. If a packet doesn't match the rules you wrote, it hits this invisible rule and is blocked.",
+      intermediate: "All Cisco ACLs end with an implicit 'deny all' statement. Even if you explicitly write `deny ip any any`, it essentially duplicates the implicit rule. Any traffic not explicitly permitted by a prior statement will be dropped.",
+      advanced: "The implicit `deny ip any any` is evaluated if the Access Control Entries (ACEs) are exhausted without a match. If dropped, the router may generate an ICMP Unreachable message (Type 3, Code 13 - Communication Administratively Prohibited) back to the source, unless `no ip unreachables` is configured on the interface to mitigate DoS vectors.",
+      cisco_best_practice: "Always explicitly configure a `deny ip any any log` at the end of security-critical ACLs. This allows you to track dropped packets in your syslog/SIEM for threat hunting, which the implicit deny does not do."
+    }
   },
   {
-    id: "access-01",
-    domain: "Network Access",
-    subtopic: "Wireless LAN",
-    difficulty: "Medium",
-    type: "mcq",
-    questionText: "Which wireless security protocol replaced the Pre-Shared Key (PSK) exchange with Simultaneous Authentication of Equals (SAE) to protect against offline dictionary attacks?",
-    options: ["WPA", "WPA2", "WPA3", "802.1X"],
-    correctAnswer: 2,
-    explanation: "WPA3 Personal introduced SAE (Simultaneous Authentication of Equals) to replace WPA2's 4-way handshake using PSK. SAE makes it nearly impossible to compromise the password via offline brute-force attacks.",
-    whyWrong: [
-      "Incorrect. WPA used TKIP, an early fix for WEP.",
-      "Incorrect. WPA2 relies on PSK for personal mode, which is vulnerable to dictionary attacks.",
-      "Correct. WPA3 utilizes SAE.",
-      "Incorrect. 802.1X is for enterprise authentication (EAP/RADIUS), not SAE."
-    ],
-    reference: "CCNA 2026 Updates: Wireless Security"
+    id: "q1005",
+    objective: "6.0 Automation and Programmability",
+    topic: "REST APIs",
+    difficulty: 5,
+    type: "single",
+    text: "Which HTTP method is typically used in a RESTful API to update an existing resource completely?",
+    options: ["GET", "POST", "PUT", "PATCH"],
+    correctAnswers: [2],
+    explanation: {
+      beginner: "PUT is used when you want to completely replace something that already exists. PATCH is for partial updates.",
+      intermediate: "In REST architecture, PUT is idempotent and is used to replace a resource in its entirety. If the resource does not exist, PUT can sometimes create it. POST is used to create new resources, and PATCH is used for partial modifications.",
+      advanced: "From an HTTP protocol perspective (RFC 7231), the PUT method requests that the state of the target resource be created or replaced with the state defined by the representation enclosed in the request message payload. It is strictly idempotent, meaning multiple identical PUT requests should have the same effect as a single one.",
+      cisco_best_practice: "When interacting with Cisco DNA Center or Meraki APIs, verify whether the endpoint expects a PUT (full payload replacement) or a PATCH (partial update) to avoid accidentally nullifying unspecified fields."
+    }
   }
 ];
 
-/* =========================================================================
-   COMPONENTS
-   ========================================================================= */
-
-// --- UI Primitives ---
-const Card = ({ children, className = '', onClick }) => (
-  <div onClick={onClick} className={`bg-white dark:bg-slate-800 rounded-2xl shadow-sm border border-slate-200 dark:border-slate-700 p-5 ${onClick ? 'cursor-pointer hover:shadow-md transition-all active:scale-[0.98]' : ''} ${className}`}>
-    {children}
-  </div>
-);
-
-const Button = ({ children, variant = 'primary', onClick, className = '', disabled = false }) => {
-  const base = "w-full py-3.5 px-4 rounded-xl font-semibold flex items-center justify-center transition-all disabled:opacity-50 disabled:cursor-not-allowed active:scale-[0.98]";
-  const variants = {
-    primary: "bg-blue-600 hover:bg-blue-700 text-white shadow-md shadow-blue-600/20",
-    secondary: "bg-slate-100 hover:bg-slate-200 dark:bg-slate-700 dark:hover:bg-slate-600 text-slate-800 dark:text-slate-100",
-    outline: "border-2 border-slate-200 dark:border-slate-700 hover:border-blue-500 dark:hover:border-blue-500 text-slate-700 dark:text-slate-200"
-  };
-  return (
-    <button onClick={onClick} disabled={disabled} className={`${base} ${variants[variant]} ${className}`}>
-      {children}
-    </button>
-  );
-};
-
-// --- Lab Renderer (Interactive) ---
-const InteractiveLabRenderer = ({ question, onAnswer, isReview, userAnswer }) => {
-  const [network, setNetwork] = useState(userAnswer?.network || '');
-  const [broadcast, setBroadcast] = useState(userAnswer?.broadcast || '');
-  const [submitted, setSubmitted] = useState(!!isReview);
-
-  const handleSubmit = () => {
-    if(!network || !broadcast) return;
-    const isCorrect = network === question.labDetails.networkTarget && broadcast === question.labDetails.broadcastTarget;
-    setSubmitted(true);
-    onAnswer(isCorrect, { network, broadcast });
-  };
-
-  return (
-    <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4">
-      <div className="bg-slate-900 text-green-400 p-4 rounded-xl font-mono text-sm leading-relaxed border border-slate-700 shadow-inner">
-        {question.questionText}
-      </div>
-
-      <div className="space-y-4">
-        <div>
-          <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Network Address</label>
-          <input 
-            type="text" 
-            placeholder="e.g. 192.168.1.0"
-            disabled={submitted}
-            value={network}
-            onChange={(e) => setNetwork(e.target.value)}
-            className="w-full p-3 rounded-xl border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-slate-900 dark:text-white outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-70"
-          />
-        </div>
-        <div>
-          <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Broadcast Address</label>
-          <input 
-            type="text" 
-            placeholder="e.g. 192.168.1.255"
-            disabled={submitted}
-            value={broadcast}
-            onChange={(e) => setBroadcast(e.target.value)}
-            className="w-full p-3 rounded-xl border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-slate-900 dark:text-white outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-70"
-          />
-        </div>
-      </div>
-
-      {!submitted && <Button onClick={handleSubmit}>Submit Configuration</Button>}
-
-      {submitted && (
-        <div className={`p-4 rounded-xl border ${userAnswer?.isCorrect === false || (!userAnswer && (network !== question.labDetails.networkTarget || broadcast !== question.labDetails.broadcastTarget)) ? 'bg-red-50 dark:bg-red-900/20 border-red-200 dark:border-red-800' : 'bg-green-50 dark:bg-green-900/20 border-green-200 dark:border-green-800'}`}>
-          <h4 className="font-bold flex items-center gap-2 mb-2">
-            {userAnswer?.isCorrect === false || (!userAnswer && (network !== question.labDetails.networkTarget || broadcast !== question.labDetails.broadcastTarget)) ? <><XCircle className="text-red-500"/> Challenge Failed</> : <><CheckCircle2 className="text-green-500"/> Challenge Passed!</>}
-          </h4>
-          <p className="text-sm dark:text-slate-300 mb-3">
-            <strong>Target Network:</strong> {question.labDetails.networkTarget}<br/>
-            <strong>Target Broadcast:</strong> {question.labDetails.broadcastTarget}
-          </p>
-          <div className="text-sm bg-white dark:bg-slate-800 p-3 rounded-lg border border-slate-200 dark:border-slate-700">
-            <strong>Explanation:</strong> {question.explanation}
-          </div>
-        </div>
-      )}
-    </div>
-  );
-};
-
-
-// --- Main Application ---
-export default function App() {
-  const [user, setUser] = useState(null);
-  const [loading, setLoading] = useState(true);
-  const [dbQuestions, setDbQuestions] = useState([]);
-  const [userData, setUserData] = useState({
-    xp: 0, level: 1, streak: 0, lastActive: '', history: [], bookmarks: [], topicStats: {}
+// ==========================================
+// CORE APPLICATION COMPONENT
+// ==========================================
+export default function CCNAExamEngine() {
+  // Global State
+  const [activeView, setActiveView] = useState('dashboard');
+  const [theme, setTheme] = useState('dark');
+  
+  // Knowledge Graph / User Progress State
+  const [knowledgeGraph, setKnowledgeGraph] = useState({
+    "1.0 Network Fundamentals": { mastery: 45, exposure: 12 },
+    "2.0 Network Access": { mastery: 60, exposure: 8 },
+    "3.0 IP Connectivity": { mastery: 30, exposure: 15 },
+    "4.0 IP Services": { mastery: 85, exposure: 20 },
+    "5.0 Security Fundamentals": { mastery: 50, exposure: 10 },
+    "6.0 Automation and Programmability": { mastery: 20, exposure: 5 },
   });
 
-  const [currentView, setCurrentView] = useState('dashboard'); // dashboard, setup, quiz, results, review
-  const [quizConfig, setQuizConfig] = useState({ mode: 'learning', count: 10, topics: [] });
-  
-  // Active Quiz State
-  const [activeQuiz, setActiveQuiz] = useState(null);
-  const [currentIndex, setCurrentIndex] = useState(0);
+  // Exam Engine State
+  const [examConfig, setExamConfig] = useState({ mode: 'practice', questionCount: 5, topics: [] });
+  const [currentExam, setCurrentExam] = useState(null);
+  const [currentQuestionIndex, setCurrentQuestionIndex] = useState(0);
   const [userAnswers, setUserAnswers] = useState({});
   const [timeRemaining, setTimeRemaining] = useState(0);
+  const [examState, setExamState] = useState('idle'); // idle, active, reviewing
+  
+  // Ref for Timer
+  const timerRef = useRef(null);
 
-  // Authentication & Firestore Sync
+  // Initialize Knowledge Graph on load (Simulation of DB fetch)
   useEffect(() => {
-    const initAuth = async () => {
-      try {
-        if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
-          await signInWithCustomToken(auth, __initial_auth_token);
-        } else {
-          await signInAnonymously(auth);
-        }
-      } catch (err) {
-        console.error("Auth error:", err);
-      }
-    };
-    initAuth();
-
-    const unsubscribe = onAuthStateChanged(auth, (u) => {
-      setUser(u);
-      if (!u) setLoading(false);
-    });
-    return () => unsubscribe();
+    // In a real app, fetch from SQLite here.
   }, []);
 
-  // Fetch Data (Guard: Rule 3)
-  useEffect(() => {
-    if (!user) return;
+  // Theme Toggler
+  const toggleTheme = () => setTheme(theme === 'dark' ? 'light' : 'dark');
 
-    const loadData = async () => {
-      setLoading(true);
-      try {
-        // Fetch Questions (Public)
-        const qRef = collection(db, 'artifacts', appId, 'public', 'data', 'questions');
-        const qSnap = await getDocs(qRef);
-        let questions = [];
-        
-        if (qSnap.empty) {
-          // Auto-seed database if empty (Enterprise Feature)
-          const batch = writeBatch(db);
-          seedQuestions.forEach(q => {
-            const docRef = doc(qRef, q.id);
-            batch.set(docRef, q);
-            questions.push(q);
-          });
-          await batch.commit();
-        } else {
-          qSnap.forEach(doc => questions.push({ id: doc.id, ...doc.data() }));
-        }
-        setDbQuestions(questions);
-
-        // Fetch User Profile (Private)
-        const uRef = doc(db, 'artifacts', appId, 'users', user.uid, 'profile', 'stats');
-        const uSnap = await getDoc(uRef);
-        if (uSnap.exists()) {
-          setUserData(uSnap.data());
-        } else {
-          await setDoc(uRef, userData);
-        }
-      } catch (err) {
-        console.error("Data load error:", err);
-      }
-      setLoading(false);
-    };
-
-    loadData();
-  }, [user]);
-
-  // Save User Data Wrapper
-  const saveUserData = async (newData) => {
-    setUserData(newData);
-    if (!user) return;
-    const uRef = doc(db, 'artifacts', appId, 'users', user.uid, 'profile', 'stats');
-    await setDoc(uRef, newData, { merge: true });
-  };
-
-  // Gamification Math
-  const calculateLevel = (xp) => Math.floor(xp / 1000) + 1;
-  const calculateProgressToNextLevel = (xp) => (xp % 1000) / 10; // 0-100%
-
-  // --- Quiz Engine Functions ---
-  const startQuiz = (preset = null) => {
-    let pool = [...dbQuestions];
-    let mode = 'learning';
-    let selectedQs = [];
-
-    if (preset === 'daily') {
-      pool = pool.sort(() => 0.5 - Math.random());
-      selectedQs = pool.slice(0, 10);
-    } else if (preset === 'weak') {
-      // Find weak topics (< 70% accuracy)
-      const weak = Object.entries(userData.topicStats)
-        .filter(([_, stats]) => (stats.correct / stats.total) < 0.7)
-        .map(([topic]) => topic);
-      
-      pool = pool.filter(q => weak.includes(q.domain)).sort(() => 0.5 - Math.random());
-      selectedQs = pool.slice(0, 15);
-      if(selectedQs.length === 0) {
-        alert("You don't have enough data on weak areas yet! Keep practicing.");
-        return;
-      }
-    } else if (preset === 'exam') {
-      mode = 'exam';
-      selectedQs = pool.sort(() => 0.5 - Math.random()).slice(0, 100); // Realistic max
-    } else {
-      // Custom config
-      mode = quizConfig.mode;
-      if (quizConfig.topics.length > 0) {
-        pool = pool.filter(q => quizConfig.topics.includes(q.domain));
-      }
-      pool = pool.sort(() => 0.5 - Math.random());
-      selectedQs = pool.slice(0, quizConfig.count === 'all' ? pool.length : parseInt(quizConfig.count));
-    }
-
-    if (selectedQs.length === 0) {
-      alert("No questions matched your criteria.");
-      return;
-    }
-
-    setActiveQuiz({ questions: selectedQs, mode, startTime: Date.now() });
-    setCurrentIndex(0);
-    setUserAnswers({});
-    if (mode === 'exam') {
-      setTimeRemaining(selectedQs.length * 60); // 1 minute per question
-    }
-    setCurrentView('quiz');
-  };
-
-  const handleAnswer = (isCorrect, answerData) => {
-    const q = activeQuiz.questions[currentIndex];
+  // Generate Exam Engine
+  const startExam = (config) => {
+    // Filter questions based on config (Simulation)
+    let selectedQuestions = [...SEED_QUESTIONS];
     
-    // XP Calculation
-    let xpGain = 0;
-    if (isCorrect) {
-      xpGain = q.difficulty === 'Easy' ? 10 : q.difficulty === 'Medium' ? 20 : 30;
+    if (config.mode === 'weakness') {
+      selectedQuestions = selectedQuestions.filter(q => {
+        const mastery = knowledgeGraph[q.objective]?.mastery || 0;
+        return mastery < 50;
+      });
     }
 
-    const newAnswers = {
-      ...userAnswers,
-      [currentIndex]: {
-        isCorrect,
-        answerData,
-        xpGained: xpGain
-      }
-    };
-    setUserAnswers(newAnswers);
+    // Shuffle and slice
+    selectedQuestions = selectedQuestions.sort(() => 0.5 - Math.random()).slice(0, config.questionCount);
 
-    // If Exam mode, auto-advance. If Learning, wait for user to click next.
-    if (activeQuiz.mode === 'exam') {
-      if (currentIndex < activeQuiz.questions.length - 1) {
-        setCurrentIndex(currentIndex + 1);
+    setCurrentExam(selectedQuestions);
+    setExamConfig(config);
+    setCurrentQuestionIndex(0);
+    setUserAnswers({});
+    setExamState('active');
+    
+    if (config.mode === 'timed') {
+      setTimeRemaining(selectedQuestions.length * 90); // 90 seconds per question
+      timerRef.current = setInterval(() => {
+        setTimeRemaining((prev) => {
+          if (prev <= 1) {
+            clearInterval(timerRef.current);
+            finishExam();
+            return 0;
+          }
+          return prev - 1;
+        });
+      }, 1000);
+    }
+    
+    setActiveView('exam');
+  };
+
+  const handleAnswerSelect = (questionId, optionIndex, isMultiple) => {
+    setUserAnswers(prev => {
+      const currentAns = prev[questionId] || [];
+      if (isMultiple) {
+        if (currentAns.includes(optionIndex)) {
+          return { ...prev, [questionId]: currentAns.filter(i => i !== optionIndex) };
+        } else {
+          return { ...prev, [questionId]: [...currentAns, optionIndex] };
+        }
       } else {
-        finishQuiz(newAnswers);
-      }
-    }
-  };
-
-  const finishQuiz = async (finalAnswers) => {
-    let score = 0;
-    let totalXpGained = 0;
-    const newTopicStats = { ...userData.topicStats };
-
-    activeQuiz.questions.forEach((q, idx) => {
-      const ans = finalAnswers[idx];
-      if (!newTopicStats[q.domain]) newTopicStats[q.domain] = { correct: 0, total: 0 };
-      newTopicStats[q.domain].total += 1;
-
-      if (ans && ans.isCorrect) {
-        score++;
-        totalXpGained += ans.xpGained;
-        newTopicStats[q.domain].correct += 1;
+        return { ...prev, [questionId]: [optionIndex] };
       }
     });
+  };
 
-    const newXp = userData.xp + totalXpGained;
-    const resultObj = {
-      date: new Date().toISOString(),
-      score,
-      total: activeQuiz.questions.length,
-      mode: activeQuiz.mode,
-      xpGained: totalXpGained
-    };
+  const finishExam = () => {
+    if (timerRef.current) clearInterval(timerRef.current);
+    
+    // Calculate Score and update Knowledge Graph
+    const newGraph = { ...knowledgeGraph };
+    let correctCount = 0;
 
-    const newHistory = [resultObj, ...userData.history].slice(0, 50); // Keep last 50
+    currentExam.forEach((q) => {
+      const uAns = userAnswers[q.id] || [];
+      const isCorrect = JSON.stringify(uAns.sort()) === JSON.stringify(q.correctAnswers.sort());
+      
+      if (isCorrect) correctCount++;
 
-    await saveUserData({
-      ...userData,
-      xp: newXp,
-      level: calculateLevel(newXp),
-      topicStats: newTopicStats,
-      history: newHistory,
-      lastActive: new Date().toISOString()
+      // Update Knowledge Graph logic
+      if (!newGraph[q.objective]) newGraph[q.objective] = { mastery: 50, exposure: 0 };
+      
+      const currentMastery = newGraph[q.objective].mastery;
+      const adjustment = isCorrect ? 5 : -5;
+      
+      newGraph[q.objective].mastery = Math.max(0, Math.min(100, currentMastery + adjustment));
+      newGraph[q.objective].exposure += 1;
     });
 
-    setCurrentView('results');
+    setKnowledgeGraph(newGraph);
+    setExamState('reviewing');
   };
 
-  const toggleBookmark = async (qId) => {
-    const bookmarks = userData.bookmarks || [];
-    const newBookmarks = bookmarks.includes(qId) 
-      ? bookmarks.filter(id => id !== qId)
-      : [...bookmarks, qId];
-    await saveUserData({ ...userData, bookmarks: newBookmarks });
+  const formatTime = (seconds) => {
+    const m = Math.floor(seconds / 60);
+    const s = seconds % 60;
+    return `${m}:${s < 10 ? '0' : ''}${s}`;
   };
 
-  // Timer Effect
-  useEffect(() => {
-    let interval;
-    if (currentView === 'quiz' && activeQuiz?.mode === 'exam' && timeRemaining > 0) {
-      interval = setInterval(() => setTimeRemaining(t => t - 1), 1000);
-    } else if (timeRemaining <= 0 && activeQuiz?.mode === 'exam') {
-      finishQuiz(userAnswers);
-    }
-    return () => clearInterval(interval);
-  }, [currentView, activeQuiz, timeRemaining]);
+  // --- SUB-COMPONENTS ---
 
+  const Navigation = () => (
+    <nav className={`w-64 flex flex-col border-r ${theme === 'dark' ? 'bg-slate-900 border-slate-800 text-slate-300' : 'bg-gray-50 border-gray-200 text-gray-700'}`}>
+      <div className="p-6">
+        <h1 className="text-2xl font-bold flex items-center gap-2 text-blue-500">
+          <Server className="w-6 h-6" />
+          CCNA Pro
+        </h1>
+        <p className="text-xs uppercase tracking-wider mt-1 opacity-60">Engine v2.0</p>
+      </div>
+      
+      <div className="flex-1 px-4 space-y-2">
+        <NavButton icon={<Activity />} label="Dashboard" view="dashboard" />
+        <NavButton icon={<Play />} label="Exam Engine" view="setup" />
+        <NavButton icon={<Brain />} label="Knowledge Graph" view="analytics" />
+        <NavButton icon={<Server />} label="Lab Integration" view="labs" />
+        <NavButton icon={<Upload />} label="Import Banks" view="import" />
+      </div>
 
-  // --- Sub-Components (Renderers) ---
+      <div className="p-4 border-t border-opacity-20 border-gray-500">
+        <button onClick={toggleTheme} className="flex items-center gap-2 text-sm opacity-70 hover:opacity-100 transition-opacity">
+          <Settings className="w-4 h-4" />
+          Toggle {theme === 'dark' ? 'Light' : 'Dark'} Mode
+        </button>
+      </div>
+    </nav>
+  );
 
-  const renderDashboard = () => {
-    const passProb = userData.history.length > 0 
-      ? Math.min(99, Math.round((userData.history.reduce((a,b)=>a+(b.score/b.total),0) / userData.history.length) * 100))
-      : 0;
-
+  const NavButton = ({ icon, label, view }) => {
+    const isActive = activeView === view || (view === 'setup' && activeView === 'exam');
     return (
-      <div className="space-y-6 animate-in fade-in">
-        <header className="flex justify-between items-center pb-2">
-          <div>
-            <h1 className="text-2xl font-bold text-slate-900 dark:text-white">CCNA Mastery</h1>
-            <p className="text-slate-500 dark:text-slate-400">Welcome back. Continue your journey.</p>
-          </div>
-          <div className="text-right flex items-center gap-4">
-            <div className="text-center">
-              <div className="text-2xl font-black text-blue-600 dark:text-blue-400">Lvl {userData.level}</div>
-              <div className="text-xs text-slate-500 font-medium">{userData.xp.toLocaleString()} XP</div>
-            </div>
-          </div>
+      <button 
+        onClick={() => setActiveView(view)}
+        className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all ${
+          isActive 
+            ? 'bg-blue-600 text-white shadow-lg shadow-blue-500/20' 
+            : 'hover:bg-blue-500/10 hover:text-blue-500'
+        }`}
+      >
+        {React.cloneElement(icon, { className: 'w-5 h-5' })}
+        <span className="font-medium">{label}</span>
+      </button>
+    );
+  };
+
+  const Dashboard = () => {
+    const avgMastery = Math.round(Object.values(knowledgeGraph).reduce((acc, curr) => acc + curr.mastery, 0) / Object.keys(knowledgeGraph).length);
+    
+    return (
+      <div className="p-8 max-w-6xl mx-auto space-y-8 animate-in fade-in duration-500">
+        <header>
+          <h2 className="text-3xl font-bold">Welcome back, Engineer.</h2>
+          <p className="opacity-70 mt-2">Your CCNA 200-301 readiness is currently estimated at <strong className="text-blue-500">{avgMastery}%</strong>.</p>
         </header>
 
-        {/* Premium Stats Row */}
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
-          <Card className="flex flex-col items-center justify-center text-center !p-4">
-            <Target className="w-8 h-8 text-blue-500 mb-2" />
-            <div className="text-2xl font-bold dark:text-white">{passProb}%</div>
-            <div className="text-xs text-slate-500 font-medium">Readiness</div>
-          </Card>
-          <Card className="flex flex-col items-center justify-center text-center !p-4">
-            <Flame className="w-8 h-8 text-orange-500 mb-2" />
-            <div className="text-2xl font-bold dark:text-white">{userData.streak}</div>
-            <div className="text-xs text-slate-500 font-medium">Day Streak</div>
-          </Card>
-          <Card className="flex flex-col items-center justify-center text-center !p-4">
-            <CheckCircle2 className="w-8 h-8 text-green-500 mb-2" />
-            <div className="text-2xl font-bold dark:text-white">
-              {Object.values(userData.topicStats).reduce((acc, val) => acc + val.correct, 0)}
-            </div>
-            <div className="text-xs text-slate-500 font-medium">Qs Solved</div>
-          </Card>
-          <Card className="flex flex-col items-center justify-center text-center !p-4" onClick={() => setCurrentView('setup')}>
-            <BarChart3 className="w-8 h-8 text-purple-500 mb-2" />
-            <div className="text-sm font-bold text-blue-600 dark:text-blue-400 mt-2">View Analytics</div>
-          </Card>
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+          <StatCard icon={<Target />} title="Predicted Score" value={`${avgMastery * 10}/1000`} color="text-emerald-500" />
+          <StatCard icon={<BookOpen />} title="Questions Exposed" value={Object.values(knowledgeGraph).reduce((a, b) => a + b.exposure, 0)} color="text-blue-500" />
+          <StatCard icon={<Clock />} title="Study Time" value="14h 20m" color="text-purple-500" />
         </div>
 
-        {/* Quick Actions */}
-        <h2 className="text-xl font-bold text-slate-900 dark:text-white pt-2">Training Modes</h2>
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-          <Card onClick={() => startQuiz('daily')} className="flex items-center gap-4 border-l-4 border-l-blue-500">
-            <div className="p-3 bg-blue-100 dark:bg-blue-900/30 rounded-xl text-blue-600">
-              <Zap className="w-6 h-6" />
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+          <div className={`p-6 rounded-2xl border ${theme === 'dark' ? 'bg-slate-800 border-slate-700' : 'bg-white border-gray-200'}`}>
+            <h3 className="text-xl font-bold mb-4 flex items-center gap-2"><Brain className="w-5 h-5" /> Recommended Action</h3>
+            <div className="p-4 rounded-xl bg-orange-500/10 border border-orange-500/20">
+              <h4 className="text-orange-500 font-bold">Weakness Detected: Automation & Programmability</h4>
+              <p className="text-sm mt-2 opacity-80">Your mastery in Objective 6.0 has dropped below 30%. The AI recommends a focused 15-question sprint.</p>
+              <button 
+                onClick={() => { setExamConfig({...examConfig, mode: 'weakness'}); setActiveView('setup'); }}
+                className="mt-4 px-4 py-2 bg-orange-500 text-white rounded-lg text-sm font-bold shadow-md hover:bg-orange-600 transition-colors"
+              >
+                Start Weakness Sprint
+              </button>
             </div>
-            <div>
-              <h3 className="font-bold text-slate-900 dark:text-white">Daily Challenge</h3>
-              <p className="text-sm text-slate-500">10 mixed questions</p>
-            </div>
-          </Card>
+          </div>
 
-          <Card onClick={() => startQuiz('weak')} className="flex items-center gap-4 border-l-4 border-l-orange-500">
-            <div className="p-3 bg-orange-100 dark:bg-orange-900/30 rounded-xl text-orange-600">
-              <Target className="w-6 h-6" />
+          <div className={`p-6 rounded-2xl border ${theme === 'dark' ? 'bg-slate-800 border-slate-700' : 'bg-white border-gray-200'}`}>
+            <h3 className="text-xl font-bold mb-4 flex items-center gap-2"><BarChart2 className="w-5 h-5" /> Topic Mastery</h3>
+            <div className="space-y-4">
+              {Object.entries(knowledgeGraph).slice(0, 4).map(([topic, data], i) => (
+                <div key={i}>
+                  <div className="flex justify-between text-sm mb-1">
+                    <span className="truncate pr-4">{topic}</span>
+                    <span className="font-bold">{data.mastery}%</span>
+                  </div>
+                  <div className="h-2 w-full bg-slate-700 rounded-full overflow-hidden">
+                    <div 
+                      className={`h-full rounded-full ${data.mastery > 70 ? 'bg-emerald-500' : data.mastery > 40 ? 'bg-blue-500' : 'bg-red-500'}`} 
+                      style={{ width: `${data.mastery}%` }}
+                    />
+                  </div>
+                </div>
+              ))}
             </div>
-            <div>
-              <h3 className="font-bold text-slate-900 dark:text-white">Weak Areas Mode</h3>
-              <p className="text-sm text-slate-500">Focus on mistakes</p>
-            </div>
-          </Card>
-
-          <Card onClick={() => setCurrentView('setup')} className="flex items-center gap-4 border-l-4 border-l-purple-500">
-            <div className="p-3 bg-purple-100 dark:bg-purple-900/30 rounded-xl text-purple-600">
-              <LayoutGrid className="w-6 h-6" />
-            </div>
-            <div>
-              <h3 className="font-bold text-slate-900 dark:text-white">Custom Quiz</h3>
-              <p className="text-sm text-slate-500">Filter by topic/type</p>
-            </div>
-          </Card>
-
-          <Card onClick={() => startQuiz('exam')} className="flex items-center gap-4 border-l-4 border-l-red-500">
-            <div className="p-3 bg-red-100 dark:bg-red-900/30 rounded-xl text-red-600">
-              <Clock className="w-6 h-6" />
-            </div>
-            <div>
-              <h3 className="font-bold text-slate-900 dark:text-white">Exam Simulator</h3>
-              <p className="text-sm text-slate-500">Timed 100-question test</p>
-            </div>
-          </Card>
+          </div>
         </div>
       </div>
     );
   };
 
-  const renderSetup = () => {
-    const allTopics = [...new Set(dbQuestions.map(q => q.domain))];
-    
-    return (
-      <div className="space-y-6 animate-in fade-in">
-        <header className="flex items-center gap-4 pb-4 border-b border-slate-200 dark:border-slate-700">
-          <button onClick={() => setCurrentView('dashboard')} className="p-2 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-full transition-colors">
-            <ArrowLeft className="w-6 h-6 dark:text-white" />
+  const StatCard = ({ icon, title, value, color }) => (
+    <div className={`p-6 rounded-2xl border flex items-center gap-4 ${theme === 'dark' ? 'bg-slate-800 border-slate-700' : 'bg-white border-gray-200 shadow-sm'}`}>
+      <div className={`p-4 rounded-xl bg-opacity-10 ${color.replace('text-', 'bg-')}`}>
+        {React.cloneElement(icon, { className: `w-8 h-8 ${color}` })}
+      </div>
+      <div>
+        <p className="text-sm opacity-60 font-medium">{title}</p>
+        <p className="text-2xl font-black">{value}</p>
+      </div>
+    </div>
+  );
+
+  const ExamSetup = () => (
+    <div className="p-8 max-w-4xl mx-auto space-y-8 animate-in fade-in">
+      <h2 className="text-3xl font-bold">Configure Examination</h2>
+      
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+        {['practice', 'timed', 'weakness'].map((mode) => (
+          <button
+            key={mode}
+            onClick={() => setExamConfig({ ...examConfig, mode })}
+            className={`p-6 rounded-2xl border text-left transition-all ${
+              examConfig.mode === mode 
+                ? 'border-blue-500 ring-2 ring-blue-500/50 bg-blue-500/5' 
+                : `${theme === 'dark' ? 'border-slate-700 hover:border-slate-500' : 'border-gray-200 hover:border-gray-400'}`
+            }`}
+          >
+            <h3 className="text-xl font-bold capitalize mb-2 text-blue-500">{mode} Mode</h3>
+            <p className="text-sm opacity-70">
+              {mode === 'practice' && "Unlimited time, immediate AI Tutor feedback available."}
+              {mode === 'timed' && "Strict 90-sec per question timer. Simulates actual exam."}
+              {mode === 'weakness' && "Targeted questions based on your lowest Knowledge Graph scores."}
+            </p>
           </button>
-          <h1 className="text-2xl font-bold dark:text-white">Custom Setup</h1>
-        </header>
+        ))}
+      </div>
 
-        <div className="space-y-4">
-          <h3 className="font-semibold dark:text-slate-200">Mode</h3>
-          <div className="flex gap-3">
-            {['learning', 'exam'].map(m => (
-              <button 
-                key={m}
-                onClick={() => setQuizConfig({...quizConfig, mode: m})}
-                className={`px-5 py-2.5 rounded-full text-sm font-medium transition-all ${quizConfig.mode === m ? 'bg-blue-600 text-white shadow-md' : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300'}`}
-              >
-                {m.charAt(0).toUpperCase() + m.slice(1)} Mode
-              </button>
-            ))}
+      <div className={`p-6 rounded-2xl border ${theme === 'dark' ? 'bg-slate-800 border-slate-700' : 'bg-white border-gray-200'}`}>
+         <h3 className="text-lg font-bold mb-4">Question Bank Scope</h3>
+         <div className="space-y-4">
+           <div>
+             <label className="text-sm font-medium opacity-70 block mb-2">Number of Questions (Max 104)</label>
+             <input 
+               type="range" min="5" max="104" value={examConfig.questionCount}
+               onChange={(e) => setExamConfig({...examConfig, questionCount: parseInt(e.target.value)})}
+               className="w-full accent-blue-500"
+             />
+             <div className="text-right font-bold text-blue-500">{examConfig.questionCount} Questions</div>
+           </div>
+         </div>
+      </div>
+
+      <button 
+        onClick={() => startExam(examConfig)}
+        className="w-full py-4 bg-blue-600 hover:bg-blue-500 text-white rounded-xl font-bold text-lg shadow-lg transition-all flex items-center justify-center gap-2"
+      >
+        <Play className="w-5 h-5" /> Initialize Engine
+      </button>
+    </div>
+  );
+
+  const ActiveExam = () => {
+    const q = currentExam[currentQuestionIndex];
+    const isMultiple = q.type === 'multiple';
+    const selectedAnswers = userAnswers[q.id] || [];
+
+    return (
+      <div className="h-full flex flex-col">
+        {/* Header bar */}
+        <div className={`flex justify-between items-center p-4 border-b ${theme === 'dark' ? 'border-slate-800 bg-slate-900' : 'border-gray-200 bg-white'}`}>
+          <div className="flex items-center gap-4">
+            <span className="px-3 py-1 bg-blue-500/20 text-blue-500 rounded-md text-sm font-bold">
+              Question {currentQuestionIndex + 1} of {currentExam.length}
+            </span>
+            <span className="text-sm opacity-60">{q.objective}</span>
           </div>
+          {examConfig.mode === 'timed' && (
+            <div className={`flex items-center gap-2 font-mono text-xl ${timeRemaining < 60 ? 'text-red-500 animate-pulse' : ''}`}>
+              <Clock className="w-5 h-5" /> {formatTime(timeRemaining)}
+            </div>
+          )}
         </div>
 
-        <div className="space-y-4">
-          <h3 className="font-semibold dark:text-slate-200">Question Count</h3>
-          <div className="flex gap-3 flex-wrap">
-            {[10, 20, 50, 'all'].map(c => (
-              <button 
-                key={c}
-                onClick={() => setQuizConfig({...quizConfig, count: c})}
-                className={`px-5 py-2.5 rounded-full text-sm font-medium transition-all ${quizConfig.count === c ? 'bg-blue-600 text-white shadow-md' : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300'}`}
-              >
-                {c}
-              </button>
-            ))}
+        {/* Question Area */}
+        <div className="flex-1 overflow-y-auto p-8 max-w-5xl mx-auto w-full">
+          <div className="mb-8">
+            <div className="flex items-center gap-2 mb-4">
+              <span className={`text-xs font-bold px-2 py-1 rounded uppercase tracking-wide ${theme === 'dark' ? 'bg-slate-800' : 'bg-gray-200'}`}>
+                {isMultiple ? 'Multiple Choice' : 'Single Choice'}
+              </span>
+              <span className={`text-xs font-bold px-2 py-1 rounded uppercase tracking-wide ${theme === 'dark' ? 'bg-slate-800 text-purple-400' : 'bg-purple-100 text-purple-700'}`}>
+                Difficulty: {q.difficulty}/10
+              </span>
+            </div>
+            <h2 className="text-2xl font-medium leading-relaxed">{q.text}</h2>
+            {isMultiple && <p className="text-sm text-blue-500 mt-2 font-medium">Select {q.correctAnswers.length} answers.</p>}
           </div>
-        </div>
 
-        <div className="space-y-4">
-          <h3 className="font-semibold dark:text-slate-200">Topics (Leave empty for all)</h3>
-          <div className="flex gap-2 flex-wrap">
-            {allTopics.map(t => {
-              const isSel = quizConfig.topics.includes(t);
+          <div className="space-y-3">
+            {q.options.map((opt, i) => {
+              const isSelected = selectedAnswers.includes(i);
               return (
-                <button 
-                  key={t}
-                  onClick={() => {
-                    const newTopics = isSel ? quizConfig.topics.filter(x=>x!==t) : [...quizConfig.topics, t];
-                    setQuizConfig({...quizConfig, topics: newTopics});
-                  }}
-                  className={`px-4 py-2 border rounded-xl text-sm font-medium transition-all ${isSel ? 'border-blue-600 bg-blue-50 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300' : 'border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-400 bg-white dark:bg-slate-800'}`}
+                <button
+                  key={i}
+                  onClick={() => handleAnswerSelect(q.id, i, isMultiple)}
+                  className={`w-full text-left p-4 rounded-xl border-2 transition-all flex items-start gap-4 ${
+                    isSelected 
+                      ? 'border-blue-500 bg-blue-500/10' 
+                      : `${theme === 'dark' ? 'border-slate-800 hover:border-slate-600 bg-slate-800/50' : 'border-gray-200 hover:border-gray-300 bg-white'}`
+                  }`}
                 >
-                  {t}
+                  <div className={`w-6 h-6 mt-0.5 rounded flex items-center justify-center border-2 flex-shrink-0 ${
+                    isSelected ? 'border-blue-500 bg-blue-500' : 'border-gray-500'
+                  } ${isMultiple ? 'rounded-md' : 'rounded-full'}`}>
+                    {isSelected && <CheckCircle className="w-4 h-4 text-white" />}
+                  </div>
+                  <span className="text-lg">{opt}</span>
                 </button>
-              )
+              );
             })}
           </div>
         </div>
 
-        <Button className="mt-8" onClick={() => startQuiz()}>Launch Quiz</Button>
+        {/* Footer Navigation */}
+        <div className={`p-4 border-t flex justify-between items-center ${theme === 'dark' ? 'border-slate-800 bg-slate-900' : 'border-gray-200 bg-white'}`}>
+          <button 
+            disabled={currentQuestionIndex === 0}
+            onClick={() => setCurrentQuestionIndex(prev => prev - 1)}
+            className="px-6 py-3 rounded-lg font-bold disabled:opacity-30 hover:bg-slate-500/20 transition-colors flex items-center gap-2"
+          >
+            <ChevronLeft className="w-5 h-5" /> Previous
+          </button>
+
+          {currentQuestionIndex === currentExam.length - 1 ? (
+            <button 
+              onClick={finishExam}
+              className="px-8 py-3 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg font-bold shadow-lg transition-all"
+            >
+              Submit Exam
+            </button>
+          ) : (
+            <button 
+              onClick={() => setCurrentQuestionIndex(prev => prev + 1)}
+              className="px-8 py-3 bg-blue-600 hover:bg-blue-500 text-white rounded-lg font-bold shadow-lg transition-all flex items-center gap-2"
+            >
+              Next <ChevronRight className="w-5 h-5" />
+            </button>
+          )}
+        </div>
       </div>
     );
   };
 
-  const renderQuiz = () => {
-    if (!activeQuiz) return null;
-    const q = activeQuiz.questions[currentIndex];
-    const isAnswered = userAnswers[currentIndex] !== undefined;
-    const ansData = userAnswers[currentIndex];
-    const isBookmarked = userData.bookmarks?.includes(q.id);
+  const ExamReview = () => {
+    // Scoring
+    let correctCount = 0;
+    currentExam.forEach((q) => {
+      const uAns = userAnswers[q.id] || [];
+      if (JSON.stringify(uAns.sort()) === JSON.stringify(q.correctAnswers.sort())) correctCount++;
+    });
+    const score = Math.round((correctCount / currentExam.length) * 100);
+
+    const [aiTutorMode, setAiTutorMode] = useState('intermediate');
 
     return (
-      <div className="flex flex-col h-full animate-in fade-in">
-        {/* Header & Progress */}
-        <header className="flex justify-between items-center mb-6">
-          <button onClick={() => { if(window.confirm("End quiz?")) setCurrentView('dashboard') }} className="p-2 text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-full">
-            <XCircle className="w-6 h-6" />
+      <div className="h-full flex flex-col">
+        {/* Results Header */}
+        <div className={`p-8 border-b text-center ${theme === 'dark' ? 'bg-slate-800 border-slate-700' : 'bg-gray-50 border-gray-200'}`}>
+          <h2 className="text-3xl font-bold mb-2">Examination Complete</h2>
+          <div className={`text-5xl font-black mb-4 ${score >= 82 ? 'text-emerald-500' : 'text-red-500'}`}>
+            {score}%
+          </div>
+          <p className="opacity-70">
+            {score >= 82 ? 'Pass! Cisco passing score is generally 820/1000.' : 'Fail. You need roughly 82% to pass the official exam.'}
+          </p>
+          <button onClick={() => { setExamState('idle'); setActiveView('dashboard'); }} className="mt-6 px-6 py-2 bg-blue-600 text-white rounded-lg font-bold">
+            Return to Dashboard
           </button>
-          
-          <div className="flex flex-col items-center flex-1 mx-4">
-            <div className="w-full bg-slate-200 dark:bg-slate-700 rounded-full h-2 mb-2">
-              <div 
-                className="bg-blue-600 h-2 rounded-full transition-all duration-500"
-                style={{ width: `${((currentIndex) / activeQuiz.questions.length) * 100}%` }}
-              />
-            </div>
-            <span className="text-xs font-semibold text-slate-500 uppercase tracking-widest">{currentIndex + 1} of {activeQuiz.questions.length}</span>
-          </div>
-
-          <div className="flex gap-2">
-            {activeQuiz.mode === 'exam' && (
-              <span className="font-mono font-bold text-red-500 flex items-center">
-                {Math.floor(timeRemaining / 60)}:{(timeRemaining % 60).toString().padStart(2, '0')}
-              </span>
-            )}
-            <button onClick={() => toggleBookmark(q.id)} className={`p-2 rounded-full ${isBookmarked ? 'text-yellow-500' : 'text-slate-400'}`}>
-              <Bookmark className="w-6 h-6" fill={isBookmarked ? 'currentColor' : 'none'} />
-            </button>
-          </div>
-        </header>
-
-        {/* Question Metadata */}
-        <div className="mb-4 flex flex-wrap gap-2">
-          <span className="px-3 py-1 bg-slate-100 dark:bg-slate-800 rounded-full text-xs font-bold text-slate-600 dark:text-slate-300 border border-slate-200 dark:border-slate-700">{q.domain}</span>
-          <span className={`px-3 py-1 rounded-full text-xs font-bold border ${q.difficulty === 'Easy' ? 'bg-green-50 text-green-700 border-green-200 dark:bg-green-900/20' : q.difficulty === 'Medium' ? 'bg-yellow-50 text-yellow-700 border-yellow-200 dark:bg-yellow-900/20' : 'bg-red-50 text-red-700 border-red-200 dark:bg-red-900/20'}`}>{q.difficulty}</span>
-          {q.type === 'lab-subnetting' && <span className="px-3 py-1 bg-purple-50 text-purple-700 border border-purple-200 rounded-full text-xs font-bold dark:bg-purple-900/20 dark:border-purple-800 flex items-center gap-1"><Server className="w-3 h-3"/> Lab Simulation</span>}
         </div>
 
-        {/* Question Content Renderers */}
-        <div className="flex-1 overflow-y-auto pb-24">
-          {q.type === 'mcq' && (
-            <div className="space-y-6">
-              <h2 className="text-lg font-bold text-slate-900 dark:text-white whitespace-pre-wrap leading-relaxed">{q.questionText}</h2>
-              <div className="space-y-3">
-                {q.options.map((opt, idx) => {
-                  let btnClass = "w-full text-left p-4 rounded-xl border-2 transition-all font-medium flex items-start gap-3 ";
-                  
-                  if (activeQuiz.mode === 'learning' && isAnswered) {
-                    if (idx === q.correctAnswer) btnClass += "border-green-500 bg-green-50 dark:bg-green-900/20 text-green-800 dark:text-green-300";
-                    else if (ansData.answerData === idx) btnClass += "border-red-500 bg-red-50 dark:bg-red-900/20 text-red-800 dark:text-red-300";
-                    else btnClass += "border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-500 dark:text-slate-400 opacity-50";
-                  } else {
-                    const isSelected = ansData?.answerData === idx;
-                    btnClass += isSelected 
-                      ? "border-blue-500 bg-blue-50 dark:bg-blue-900/20 text-blue-800 dark:text-blue-300" 
-                      : "border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 hover:border-blue-300 text-slate-700 dark:text-slate-200";
-                  }
+        {/* AI Tutor Review */}
+        <div className="flex-1 overflow-y-auto p-8 max-w-5xl mx-auto w-full space-y-12">
+          {currentExam.map((q, index) => {
+            const uAns = userAnswers[q.id] || [];
+            const isCorrect = JSON.stringify(uAns.sort()) === JSON.stringify(q.correctAnswers.sort());
 
-                  return (
-                    <button 
-                      key={idx} 
-                      disabled={isAnswered && activeQuiz.mode === 'learning'}
-                      onClick={() => handleAnswer(idx === q.correctAnswer, idx)}
-                      className={btnClass}
-                    >
-                      <span className={`font-bold flex-shrink-0 w-6 h-6 flex items-center justify-center rounded-md ${activeQuiz.mode === 'learning' && isAnswered ? '' : 'bg-slate-100 dark:bg-slate-700'}`}>
-                        {['A','B','C','D'][idx]}
-                      </span>
-                      <span>{opt}</span>
-                    </button>
-                  );
-                })}
-              </div>
-
-              {/* Learning Mode Explanation Boson-Style */}
-              {activeQuiz.mode === 'learning' && isAnswered && (
-                <div className="mt-6 animate-in slide-in-from-bottom-4">
-                  <div className="bg-blue-50 dark:bg-blue-900/10 border border-blue-200 dark:border-blue-800 rounded-xl p-5">
-                    <h3 className="font-bold flex items-center gap-2 mb-3 text-blue-800 dark:text-blue-300">
-                      <GraduationCap className="w-5 h-5"/> Detailed Explanation
-                    </h3>
-                    <p className="text-slate-700 dark:text-slate-300 text-sm leading-relaxed mb-4">{q.explanation}</p>
+            return (
+              <div key={q.id} className={`p-6 rounded-2xl border-l-4 ${theme === 'dark' ? 'bg-slate-800 border-slate-700' : 'bg-white shadow-sm border-gray-200'} ${isCorrect ? 'border-l-emerald-500' : 'border-l-red-500'}`}>
+                <div className="flex items-center gap-3 mb-4">
+                  {isCorrect ? <CheckCircle className="w-6 h-6 text-emerald-500" /> : <XCircle className="w-6 h-6 text-red-500" />}
+                  <h3 className="text-xl font-bold">Question {index + 1}</h3>
+                  <span className="ml-auto text-sm opacity-60">{q.topic}</span>
+                </div>
+                <p className="text-lg mb-6">{q.text}</p>
+                
+                <div className="space-y-2 mb-6">
+                  {q.options.map((opt, i) => {
+                    const isUserSelected = uAns.includes(i);
+                    const isActuallyCorrect = q.correctAnswers.includes(i);
                     
-                    {q.whyWrong && (
-                      <div className="space-y-2 border-t border-blue-200 dark:border-blue-800/50 pt-4 mt-4">
-                        <h4 className="text-xs font-bold uppercase text-slate-500">Option Analysis</h4>
-                        {q.whyWrong.map((reason, idx) => (
-                          <div key={idx} className="flex gap-2 text-sm text-slate-600 dark:text-slate-400">
-                            <span className="font-bold flex-shrink-0 text-slate-800 dark:text-slate-200">{['A','B','C','D'][idx]}.</span>
-                            <span>{reason}</span>
-                          </div>
-                        ))}
+                    let bg = theme === 'dark' ? 'bg-slate-900' : 'bg-gray-50';
+                    let border = 'border-transparent';
+                    
+                    if (isActuallyCorrect) {
+                      bg = 'bg-emerald-500/20'; border = 'border-emerald-500';
+                    } else if (isUserSelected && !isActuallyCorrect) {
+                      bg = 'bg-red-500/20'; border = 'border-red-500';
+                    }
+
+                    return (
+                      <div key={i} className={`p-3 rounded-lg border flex items-center justify-between ${bg} ${border}`}>
+                        <span>{opt}</span>
+                        {isActuallyCorrect && <span className="text-xs font-bold text-emerald-500 uppercase">Correct Answer</span>}
+                        {isUserSelected && !isActuallyCorrect && <span className="text-xs font-bold text-red-500 uppercase">Your Selection</span>}
                       </div>
-                    )}
-                    {q.reference && (
-                      <div className="mt-4 text-xs font-mono text-slate-400">Ref: {q.reference}</div>
-                    )}
+                    );
+                  })}
+                </div>
+
+                {/* AI Tutor Explanation Block */}
+                <div className={`mt-6 rounded-xl border overflow-hidden ${theme === 'dark' ? 'border-blue-900/50 bg-blue-900/10' : 'border-blue-200 bg-blue-50'}`}>
+                  <div className={`p-3 flex items-center justify-between border-b ${theme === 'dark' ? 'border-blue-900/50 bg-blue-900/30' : 'border-blue-200 bg-blue-100'}`}>
+                    <div className="flex items-center gap-2 text-blue-500 font-bold">
+                      <Brain className="w-5 h-5" /> AI Tutor Explanation
+                    </div>
+                    <div className="flex gap-2 text-xs">
+                      {['beginner', 'intermediate', 'advanced'].map(level => (
+                        <button 
+                          key={level} 
+                          onClick={() => setAiTutorMode(level)}
+                          className={`px-3 py-1 rounded-md capitalize font-bold ${aiTutorMode === level ? 'bg-blue-500 text-white' : 'hover:bg-blue-500/20 text-blue-500'}`}
+                        >
+                          {level}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                  <div className="p-4 space-y-4">
+                    <p className="leading-relaxed">{q.explanation[aiTutorMode]}</p>
+                    <div className={`p-3 rounded-lg flex items-start gap-3 mt-4 ${theme === 'dark' ? 'bg-slate-900' : 'bg-white'}`}>
+                      <Shield className="w-5 h-5 text-orange-500 flex-shrink-0 mt-0.5" />
+                      <div>
+                        <span className="text-xs font-bold text-orange-500 uppercase block mb-1">Cisco Best Practice</span>
+                        <p className="text-sm opacity-90">{q.explanation.cisco_best_practice}</p>
+                      </div>
+                    </div>
                   </div>
                 </div>
-              )}
+
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    );
+  };
+
+  const LabsView = () => (
+    <div className="p-8 max-w-5xl mx-auto animate-in fade-in">
+      <h2 className="text-3xl font-bold mb-6 flex items-center gap-3">
+        <Server className="w-8 h-8 text-blue-500" /> Lab Integration
+      </h2>
+      <p className="opacity-70 mb-8 text-lg">Launch external simulation files based on your weak topics. Requires local installation of Packet Tracer, GNS3, or EVE-NG.</p>
+      
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+        {[
+          { title: "OSPF Multi-Area Troubleshooting", type: "Packet Tracer", topic: "3.0 IP Connectivity", status: "Recommended" },
+          { title: "VLAN ACLs (VACLs) Configuration", type: "EVE-NG", topic: "5.0 Security Fundamentals", status: "Not Started" },
+          { title: "BGP Peering over IPsec VPN", type: "GNS3", topic: "3.0 IP Connectivity", status: "Completed" }
+        ].map((lab, i) => (
+          <div key={i} className={`p-6 rounded-2xl border flex flex-col justify-between ${theme === 'dark' ? 'bg-slate-800 border-slate-700' : 'bg-white border-gray-200'}`}>
+            <div>
+              <div className="flex justify-between items-start mb-2">
+                <span className={`text-xs font-bold px-2 py-1 rounded uppercase tracking-wide ${theme === 'dark' ? 'bg-slate-700' : 'bg-gray-100'}`}>{lab.type}</span>
+                <span className={`text-xs font-bold px-2 py-1 rounded uppercase tracking-wide ${lab.status === 'Recommended' ? 'text-orange-500 bg-orange-500/10' : 'opacity-50'}`}>{lab.status}</span>
+              </div>
+              <h3 className="text-xl font-bold mb-1">{lab.title}</h3>
+              <p className="text-sm opacity-60">{lab.topic}</p>
             </div>
-          )}
-
-          {q.type === 'lab-subnetting' && (
-             <InteractiveLabRenderer 
-                question={q} 
-                userAnswer={ansData}
-                onAnswer={(isCorrect, data) => handleAnswer(isCorrect, data)}
-             />
-          )}
-        </div>
-
-        {/* Footer Actions */}
-        {activeQuiz.mode === 'learning' && isAnswered && (
-          <div className="fixed bottom-0 left-0 right-0 p-4 bg-white/80 dark:bg-slate-900/80 backdrop-blur-md border-t border-slate-200 dark:border-slate-800 flex justify-center max-w-[600px] mx-auto">
-             {currentIndex < activeQuiz.questions.length - 1 ? (
-                <Button onClick={() => setCurrentIndex(currentIndex+1)} className="w-full">Continue <ChevronRight className="w-5 h-5 ml-1"/></Button>
-             ) : (
-                <Button onClick={() => finishQuiz(userAnswers)} variant="primary">Finish & View Results</Button>
-             )}
+            <button className="mt-6 w-full py-2 bg-blue-600/10 hover:bg-blue-600 text-blue-500 hover:text-white rounded-lg font-bold transition-colors flex justify-center items-center gap-2">
+              <Play className="w-4 h-4" /> Launch Lab
+            </button>
           </div>
-        )}
+        ))}
       </div>
-    );
-  };
+    </div>
+  );
 
-  const renderResults = () => {
-    let score = 0;
-    activeQuiz.questions.forEach((_, idx) => {
-      if (userAnswers[idx]?.isCorrect) score++;
-    });
-    const pct = Math.round((score / activeQuiz.questions.length) * 100);
+  const ImportView = () => (
+    <div className="p-8 max-w-3xl mx-auto animate-in fade-in">
+       <h2 className="text-3xl font-bold mb-6 flex items-center gap-3">
+        <DatabaseIcon className="w-8 h-8 text-purple-500" /> Database Management
+      </h2>
+      <div className={`p-8 border-2 border-dashed rounded-2xl text-center ${theme === 'dark' ? 'border-slate-700 bg-slate-800/50' : 'border-gray-300 bg-gray-50'}`}>
+        <Upload className="w-12 h-12 mx-auto mb-4 text-slate-400" />
+        <h3 className="text-xl font-bold mb-2">Import Question Bank</h3>
+        <p className="opacity-70 mb-6 max-w-md mx-auto">Upload JSON, CSV, or YAML formats. The AI engine will automatically parse, tag, and rate the difficulty of imported questions.</p>
+        <button className="px-6 py-3 bg-purple-600 hover:bg-purple-500 text-white rounded-lg font-bold transition-all shadow-lg">
+          Select File (.json, .csv)
+        </button>
+      </div>
 
-    return (
-      <div className="space-y-6 animate-in fade-in">
-        <div className="text-center py-8">
-          <div className={`w-32 h-32 mx-auto rounded-full border-8 flex items-center justify-center mb-6 ${pct >= 80 ? 'border-green-500 text-green-500' : pct >= 60 ? 'border-yellow-500 text-yellow-500' : 'border-red-500 text-red-500'}`}>
-            <span className="text-4xl font-black">{pct}%</span>
+      <div className="mt-8">
+        <h4 className="font-bold mb-4">Recent Import History</h4>
+        <div className={`rounded-xl border divide-y ${theme === 'dark' ? 'border-slate-700 divide-slate-700' : 'border-gray-200 divide-gray-200'}`}>
+          <div className="p-4 flex justify-between items-center text-sm">
+            <div className="flex items-center gap-3">
+              <FileText className="w-5 h-5 text-blue-500" />
+              <span>boson_export_v4.json</span>
+            </div>
+            <span className="opacity-60">Imported 142 Questions</span>
+            <span className="text-emerald-500 font-bold">Success</span>
           </div>
-          <h1 className="text-2xl font-bold dark:text-white">Exam Complete</h1>
-          <p className="text-slate-500">You scored {score} out of {activeQuiz.questions.length}</p>
         </div>
-
-        <div className="grid grid-cols-2 gap-4 mb-6">
-           <Card className="text-center !p-4 bg-blue-50 dark:bg-blue-900/20 border-blue-200 dark:border-blue-800">
-             <div className="text-sm font-bold text-blue-600 mb-1">XP Gained</div>
-             <div className="text-2xl font-black text-slate-900 dark:text-white">
-               +{Object.values(userAnswers).reduce((acc, a) => acc + (a?.xpGained || 0), 0)}
-             </div>
-           </Card>
-           <Card className="text-center !p-4 bg-orange-50 dark:bg-orange-900/20 border-orange-200 dark:border-orange-800">
-             <div className="text-sm font-bold text-orange-600 mb-1">Current Level</div>
-             <div className="text-2xl font-black text-slate-900 dark:text-white">{userData.level}</div>
-           </Card>
-        </div>
-
-        <Button onClick={() => setCurrentView('dashboard')}>Return to Dashboard</Button>
       </div>
-    );
-  };
+    </div>
+  );
 
+  // Helper Icon
+  const DatabaseIcon = ({ className }) => (
+    <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}><ellipse cx="12" cy="5" rx="9" ry="3"></ellipse><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"></path><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"></path></svg>
+  );
 
-  // App Skeleton
-  if (loading) {
-    return (
-      <div className="min-h-screen flex items-center justify-center bg-slate-50 dark:bg-slate-900">
-        <div className="animate-spin text-blue-600"><RefreshCw className="w-8 h-8" /></div>
-      </div>
-    );
-  }
-
+  // Main Render
   return (
-    <div className="min-h-screen bg-slate-50 dark:bg-slate-900 text-slate-900 dark:text-slate-100 font-sans transition-colors pb-safe">
-      <div className="max-w-[600px] mx-auto min-h-screen flex flex-col relative p-4">
-        {currentView === 'dashboard' && renderDashboard()}
-        {currentView === 'setup' && renderSetup()}
-        {currentView === 'quiz' && renderQuiz()}
-        {currentView === 'results' && renderResults()}
-      </div>
+    <div className={`min-h-screen flex font-sans transition-colors duration-300 ${theme === 'dark' ? 'bg-slate-950 text-white' : 'bg-white text-slate-900'}`}>
+      
+      {/* Sidebar: Only show if not actively taking an exam */}
+      {examState !== 'active' && <Navigation />}
+
+      {/* Main Content Area */}
+      <main className="flex-1 h-screen overflow-y-auto">
+        {activeView === 'dashboard' && <Dashboard />}
+        {activeView === 'setup' && <ExamSetup />}
+        {activeView === 'analytics' && <Dashboard />} {/* Re-using dashboard view for demo brevity */}
+        {activeView === 'labs' && <LabsView />}
+        {activeView === 'import' && <ImportView />}
+        
+        {activeView === 'exam' && (
+          examState === 'active' ? <ActiveExam /> : <ExamReview />
+        )}
+      </main>
+      
     </div>
   );
 }
